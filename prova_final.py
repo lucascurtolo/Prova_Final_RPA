@@ -1,9 +1,13 @@
 import requests
-import re
 from PIL import Image
 from io import BytesIO
+import re
 from sqlalchemy import Column, Integer, String, ForeignKey, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from cryptography.fernet import Fernet
 
 Base = declarative_base()
 
@@ -22,7 +26,9 @@ class Cachorro(Base):
     weight_metric = Column(String)
     image_url = Column(String)
 
-    dados_processados = relationship("DadosProcessados", back_populates="cachorro", uselist=False)
+    dados_processados = relationship(
+        "DadosProcessados", back_populates="cachorro", uselist=False)
+
 
 class DadosProcessados(Base):
     __tablename__ = "dados_processados"
@@ -100,7 +106,6 @@ def mostrar_raca_por_id(raca_id):
         print("Raça salva no banco de dados.")
     else:
         print("Raça já existe no banco de dados.")
-    
     processar_dados(raca_id, session)
     session.close()
 
@@ -121,7 +126,8 @@ def processar_dados(raca_id, session):
     min_life_span = int(anos[0]) if anos else None
     max_life_span = int(anos[1]) if len(anos) > 1 else min_life_span
 
-    dados_existentes = session.query(DadosProcessados).filter_by(cachorro_id=raca_id).first()
+    dados_existentes = session.query(
+        DadosProcessados).filter_by(cachorro_id=raca_id).first()
 
     if dados_existentes is None:
         dados_processados = DadosProcessados(
@@ -140,4 +146,65 @@ def processar_dados(raca_id, session):
     print(f"Dados processados para a raça {cachorro.name} foram salvos.")
 
 
-mostrar_raca_por_id(6)
+def gerar_relatorio():
+    session = Session()
+    relatorio = "Relatório de Raças de Cães Processadas\n\n"
+    dados = session.query(Cachorro).join(DadosProcessados).all()
+    if not dados:
+        session.close()
+        return "Nenhum dado processado encontrado."
+    for cachorro in dados:
+        dp = cachorro.dados_processados
+        relatorio += (
+            f"Raça: {cachorro.name}\n"
+            f"Temperamentos: {cachorro.temperament}\n"
+            f"Número de temperamentos: {dp.temperament_count}\n"
+            f"Vida útil: {cachorro.life_span} (Min: {dp.min_life_span}, Max: {dp.max_life_span})\n"
+            "-----------------------------\n"
+        )
+    session.close()
+    return relatorio
+
+
+chave = b"ekOdnW1rX-_5L3_zCYQUcBEaIlxcNigEh0ElsKWBzfk="
+senha_criptografada = b"gAAAAABoQgtb7SVSVnuypo70fpphyVuL7RZNUIXYD_x311GBBPWTUdNy63FEbKCOSLa5KsQ96bvDvShSnK9UugdCLJIn-GiQHkUNTB_KOfNQiCO_KEkRsVg="
+
+
+def obter_senha():
+    fernet = Fernet(chave)
+    return fernet.decrypt(senha_criptografada).decode()
+
+
+def enviar_email(corpo):
+    remetente = "lucascurtolobelem@gmail.com"
+    destinatario = "lucasc.belem@gmail.com"
+    senha = obter_senha()
+
+    assunto = "Relatório Automático - Raças de Cães"
+
+    msg = MIMEMultipart()
+    msg["From"] = remetente
+    msg["To"] = destinatario
+    msg["Subject"] = assunto
+    msg.attach(MIMEText(corpo, "plain"))
+
+    servidor_smtp = "smtp.gmail.com"
+    porta_smtp = 587
+
+    with smtplib.SMTP(servidor_smtp, porta_smtp) as server:
+        server.starttls()
+        server.login(remetente, senha)
+        server.send_message(msg)
+    print("E-mail enviado com sucesso!")
+
+
+if __name__ == "__main__":
+    # Buscar e salvar/processar raças com IDs de 1 a 10
+    for raca_id in range(1, 11):
+        mostrar_raca_por_id(raca_id)
+
+    # Gerar o relatório
+    corpo_email = gerar_relatorio()
+
+    # Enviar o e-mail com o relatório
+    enviar_email(corpo_email)
